@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using TaleWorlds.CampaignSystem;
 using TaleWorlds.CampaignSystem.Actions;
+using TaleWorlds.CampaignSystem.Encyclopedia;
 using TaleWorlds.CampaignSystem.Settlements;
 using TaleWorlds.Library;
 
@@ -41,7 +42,7 @@ namespace ChangeSettlementCulture
                 return;
             }
 
-            StartTimer(settlement);
+            StartTimerOnSettlementOwnerChanged(settlement, newOwner);
         }
 
         public void OnGameLoaded(CampaignGameStarter campaignGameStarter)
@@ -59,8 +60,10 @@ namespace ChangeSettlementCulture
             {
                 foreach (Settlement settlement in Campaign.Current.Settlements.Where(x => x.IsTown || x.IsCastle))
                 {
-                    StartTimer(settlement);
+                    StartTimerOnGameLoaded(settlement);
                 }
+
+                InformationManager.DisplayMessage(new InformationMessage($"Change Settlement and Recruits culture is loaded succesfully, ConvertRecruitableTroops is set to {Settings.ConvertRecruitableTroops}, and Cultures will change after {Settings.TimeToConvertInDays} days."));
 
                 return;
             }
@@ -69,6 +72,8 @@ namespace ChangeSettlementCulture
             SettlementChangeTimers = JsonConvert.DeserializeObject<List<SettlementChangeTimer>>(json);
 
             SetCultureOnLoad();
+
+            InformationManager.DisplayMessage(new InformationMessage($"Change Settlement and Recruits culture is loaded succesfully, ConvertRecruitableTroops is set to {Settings.ConvertRecruitableTroops}, and Cultures will change after {Settings.TimeToConvertInDays} days."));
         }
 
         public void OnDayPassed()
@@ -104,25 +109,31 @@ namespace ChangeSettlementCulture
 
         public void OnNewGameStart(CampaignGameStarter campaignGameStarter)
         {
-            if (!Campaign.Current.GameStarted || Campaign.Current.Settlements == null)
+            SaveFilePath = $@"../../Modules/ChangeSettlementCulture/saves/SettlementChangeTimers-{Campaign.Current.UniqueGameId}.json";
+
+            InformationManager.DisplayMessage(new InformationMessage($"Change Settlement and Recruits culture is loaded succesfully, ConvertRecruitableTroops is set to {Settings.ConvertRecruitableTroops}, and Cultures will change after {Settings.TimeToConvertInDays} days."));
+        }
+
+        private void StartTimerOnSettlementOwnerChanged(Settlement settlement, Hero newOwner)
+        {
+            SettlementChangeTimer existingTimer = SettlementChangeTimers.Where(x => x.SettlementId == settlement.Id.InternalValue).FirstOrDefault();
+
+            if (existingTimer == null)
             {
+                StartTimer(settlement, newOwner);
                 return;
             }
 
-            if (!File.Exists($@"../../Modules/ChangeSettlementCulture/saves/SettlementChangeTimers-{Campaign.Current.UniqueGameId}.json"))
+            if (settlement.Culture == newOwner.Culture)
             {
-                foreach (Settlement settlement in Campaign.Current.Settlements.Where(x => x.IsTown || x.IsCastle))
-                {
-                    StartTimer(settlement);
-                }
-
+                existingTimer.DaysSinceOwnerChanged = Settings.TimeToConvertInDays;
+                InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} is already of {settlement.Owner.Culture.Name} culture", new Color(0f, 1f, 0f)));
                 return;
             }
 
-            string json = File.ReadAllText($@"../../Modules/ChangeSettlementCulture/saves/SettlementChangeTimers-{Campaign.Current.UniqueGameId}.json");
-            SettlementChangeTimers = JsonConvert.DeserializeObject<List<SettlementChangeTimer>>(json);
+            existingTimer.DaysSinceOwnerChanged = 0;
 
-            SetCultureOnLoad();
+            InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} Will be converted to {settlement.Owner.Culture.Name} in {Settings.TimeToConvertInDays + 1} days.", new Color(0f, 0f, 1f)));
         }
 
         private void ResetNotables()
@@ -186,7 +197,7 @@ namespace ChangeSettlementCulture
             }
         }
 
-        private void StartTimer(Settlement settlement)
+        private void StartTimer(Settlement settlement, Hero newOwner)
         {
             SettlementChangeTimer existingTimer = SettlementChangeTimers.Where(x => x.SettlementId == settlement.Id.InternalValue).FirstOrDefault();
 
@@ -196,11 +207,43 @@ namespace ChangeSettlementCulture
                 return;
             }
 
-            SettlementChangeTimer newTimer = new SettlementChangeTimer(settlement.Id.InternalValue);
+            SettlementChangeTimer newTimer = new SettlementChangeTimer(settlement.Id.InternalValue, settlement.Name.ToString());
+
+            if (settlement.Culture == newOwner.Culture)
+            {
+                newTimer.DaysSinceOwnerChanged = Settings.TimeToConvertInDays;
+                SettlementChangeTimers.Add(newTimer);
+                InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} is already of {settlement.Owner.Culture.Name} culture", new Color(0f, 1f, 0f)));
+                return;
+            }
 
             SettlementChangeTimers.Add(newTimer);
 
-            InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} Will be converted to {settlement.Owner.Culture.Name} in {Settings.TimeToConvertInDays + 1} days."));
+            InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} Will be converted to {settlement.Owner.Culture.Name} in {Settings.TimeToConvertInDays + 1} days.", new Color(0f, 0f, 1f)));
+        }
+
+        private void StartTimerOnGameLoaded(Settlement settlement)
+        {
+            SettlementChangeTimer existingTimer = SettlementChangeTimers.Where(x => x.SettlementId == settlement.Id.InternalValue).FirstOrDefault();
+
+            if (existingTimer != null)
+            {
+                existingTimer.DaysSinceOwnerChanged = 0;
+                return;
+            }
+
+            SettlementChangeTimer newTimer = new SettlementChangeTimer(settlement.Id.InternalValue, settlement.Name.ToString());
+
+            if (settlement.Culture == settlement.Owner.Culture)
+            {
+                newTimer.DaysSinceOwnerChanged = Settings.TimeToConvertInDays;
+                SettlementChangeTimers.Add(newTimer);
+                return;
+            }
+
+            SettlementChangeTimers.Add(newTimer);
+
+            InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} Will be converted to {settlement.Owner.Culture.Name} in {Settings.TimeToConvertInDays + 1} days.", new Color(0f, 0f, 1f)));
         }
 
         private bool CheckChangeSettlementCulture(SettlementChangeTimer settlementChangeTimer)
@@ -230,7 +273,7 @@ namespace ChangeSettlementCulture
                 var remainingTowns = Campaign.Current.Settlements.Where(s => s.IsTown && s.Culture == settlement.Culture).Count();
                 if (remainingTowns == 1)
                 {
-                    InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} can't be converted to {settlement.Owner.Culture.Name} becuase it is the last Town of {settlement.Culture} culture."));
+                    InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name} can't be converted to {settlement.Owner.Culture.Name} becuase it is the last Town of {settlement.Culture} culture.", new Color(1f, 0f, 0f)));
                     return;
                 }
             }
@@ -239,40 +282,12 @@ namespace ChangeSettlementCulture
 
             if (Settings.ConvertRecruitableTroops)
             {
-                foreach (Village village in settlement.BoundVillages)
-                {
-                    if (village.Settlement.Culture == ownerCulture)
-                    {
-                        continue;
-                    }
-
-                    village.Settlement.Culture = ownerCulture;
-
-                    foreach (Hero notable in village.Settlement.Notables)
-                    {
-                        if (notable.Culture == ownerCulture)
-                        {
-                            continue;
-                        }
-
-                        notable.Culture = ownerCulture;
-                    }
-                }
-
-                foreach (Hero notable in settlement.Notables)
-                {
-                    if (notable.Culture == ownerCulture)
-                    {
-                        continue;
-                    }
-
-                    notable.Culture = ownerCulture;
-                }
+                ChangeSettlementNotablesCulture(settlementId);
             }
 
             if (!calledByOnGameLoad)
             {
-                InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name}'s culture is converted to {settlement.Owner.Culture.Name}."));
+                InformationManager.DisplayMessage(new InformationMessage($"{settlement.Name}'s culture is converted to {settlement.Owner.Culture.Name}.", new Color(0f, 1f, 0f)));
             }
         }
 
